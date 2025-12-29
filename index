@@ -1,0 +1,601 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<title>Inventory & Order System</title>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<style>
+body{font-family:Arial;margin:0;background:#f4f6f8}
+header{background:#1f2937;color:#fff;padding:15px}
+.container{padding:20px}
+.cards{display:grid;grid-template-columns:repeat(2,1fr);gap:15px}
+.card{background:#fff;padding:15px;border-radius:10px;box-shadow:0 2px 6px rgba(0,0,0,.1)}
+.actions{margin:15px 0;display:flex;flex-wrap:wrap;gap:10px}
+button{padding:10px 14px;border:none;border-radius:8px;cursor:pointer}
+.primary{background:#2563eb;color:#fff}
+.warn{background:#dc2626;color:#fff}
+.gray{background:#6b7280;color:#fff}
+table{width:100%;border-collapse:collapse;background:#fff;border-radius:10px;overflow:hidden}
+th,td{padding:10px;border-bottom:1px solid #e5e7eb;font-size:14px}
+th{background:#f1f5f9;text-align:left}
+.status-ok{color:green;font-weight:bold}
+.status-low{color:red;font-weight:bold}
+input,select,textarea{width:100%;padding:8px;margin:5px 0}
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.5);display:none;align-items:center;justify-content:center}
+.modal-content{background:#fff;padding:20px;border-radius:12px;width:420px;max-width:95%}
+.list{border:1px solid #ccc;border-radius:6px;max-height:120px;overflow:auto}
+.list div{padding:6px;cursor:pointer}
+.list div:hover{background:#e5e7eb}
+.hidden{display:none}
+.nav-btn {
+  background: #e5e7eb;
+  color: #000;
+}
+
+.nav-btn.active {
+  background: #2563eb;
+  color: #fff;
+}
+
+
+
+</style>
+</head>
+
+<body>
+<header><h2>Inventory & Purchase Order System</h2></header>
+<div class="container">
+
+<div class="actions">
+  <button id="btnInv" class="nav-btn primary" onclick="showInv()">Inventory</button>
+  <button id="btnOrder" class="nav-btn" onclick="showOrder()">Order</button>
+</div>
+
+
+<!-- INVENTORY -->
+<div id="inventory">
+
+<div class="cards">
+  <div class="card"><h4>Total Item</h4><h2 id="totalItem">0</h2></div>
+  <div class="card"><h4>Low Stock</h4><h2 id="lowStock">0</h2></div>
+</div>
+
+<div class="actions">
+  <button class="primary" onclick="openAdd()">Tambah Item</button>
+  <button class="primary" onclick="openMasuk()">Barang Masuk</button>
+  <button class="warn" onclick="openKeluar()">Barang Keluar</button>
+  <button onclick="openHistory()">History</button>
+  <button class="gray" onclick="openImport()">Import Excel</button>
+</div>
+
+
+<div style="display:flex;justify-content:flex-end;gap:10px;margin:10px 0">
+  <button id="btnLow" class="nav-btn gray" onclick="filterLow()">Low Stock</button>
+  <button id="btnAll" class="nav-btn active" onclick="showAll()">All Item</button>
+</div>
+
+ 
+<table>
+<thead>
+<tr>
+<th>Kode</th><th>Nama</th><th>Kategori</th><th>Supplier</th>
+<th>Min</th><th>Stok</th><th>Satuan</th><th>Status</th><th>Aksi</th>
+</tr>
+</thead>
+<tbody id="tbody"></tbody>
+</table>
+</div>
+
+<!-- ORDER -->
+<div id="order" class="hidden">
+<div class="actions">
+  <button class="primary" onclick="openPO()">Buat PO</button>
+</div>
+<table>
+<thead>
+<tr>
+<th>No PO</th><th>Nama</th><th>Kode</th><th>Qty</th><th>Satuan</th><th>ETA</th><th>Selesai</th>
+</tr>
+</thead>
+<tbody id="orderBody"></tbody>
+</table>
+</div>
+
+<div class="modal" id="modal"><div class="modal-content" id="modalContent"></div></div>
+
+<script>
+let items=[],history=[],orders=[],selected=null;
+let adjustIndex = null;
+const modal=document.getElementById("modal"),modalContent=document.getElementById("modalContent");
+const today=()=>new Date().toLocaleString();
+
+function saveOrders(){
+  localStorage.setItem("orders", JSON.stringify(orders));
+}
+
+function loadOrders(){
+  orders = JSON.parse(localStorage.getItem("orders")) || [];
+}
+
+function openModal(){modal.style.display="flex"}
+function closeModal(){modal.style.display="none"}
+function showInv(){
+  inventory.classList.remove("hidden");
+  order.classList.add("hidden");
+  setActiveNav('btnInv');
+}
+
+function showOrder(){
+  order.classList.remove("hidden");
+  inventory.classList.add("hidden");
+  setActiveNav('btnOrder');
+}
+
+
+function render(data=items){
+tbody.innerHTML="";let low=0;
+data.forEach(i=>{
+let s=i.stok<=i.min?"LOW":"AMAN";if(s==="LOW")low++;
+tbody.innerHTML+=`
+<tr>
+<td>${i.kode}</td><td>${i.nama}</td><td>${i.kategori}</td><td>${i.supplier}</td>
+<td>${fmt(i.min)}</td>
+<td>${fmt(i.stok)}</td>
+<td class="${s==="LOW"?"status-low":"status-ok"}">${s}</td>
+<td><button onclick="openAdjust('${i.kode}')">Adjust</button></td>
+</tr>`;
+});
+totalItem.innerText=items.length;lowStock.innerText=low;
+}
+function filterLow(){
+  render(items.filter(i => i.stok <= i.min));
+  setActiveFilter("btnLow");
+}
+
+
+/* ITEM */
+function openAdd(){
+modalContent.innerHTML=`
+<h3>Tambah Item</h3>
+<input id="kode" placeholder="Kode">
+<input id="nama" placeholder="Nama">
+<select id="kategori"><option>RMPM</option><option>Sparepart</option><option>Chemical</option></select>
+<input id="supplier" placeholder="Supplier">
+<input id="stok" type="number" placeholder="Stok Awal">
+<input id="min" type="number" placeholder="Min">
+<input id="satuan" placeholder="Satuan">
+<button class="primary" onclick="addItem()">Simpan</button>
+<button onclick="closeModal()">Batal</button>`;openModal();
+}
+
+/* AUTOCOMPLETE */
+function autoList(input, cb){
+  const listEl = input.nextElementSibling;
+  listEl.innerHTML = "";
+
+  if(!input.value) return;
+
+  items
+    .filter(i => i.nama.toLowerCase().includes(input.value.toLowerCase()))
+    .forEach(i => {
+      const d = document.createElement("div");
+      d.innerText = i.nama;
+      d.onclick = () => cb(i, input, listEl);
+      listEl.appendChild(d);
+    });
+}
+
+async function addItem(){
+  const k = kode.value.trim();
+
+  if(!k){
+    alert("Kode wajib diisi");
+    return;
+  }
+
+  if(isKodeExist(k)){
+    alert("Kode barang sudah digunakan");
+    return;
+  }
+
+  const item = {
+    kode: k,
+    nama: nama.value,
+    kategori: kategori.value,
+    supplier: supplier.value,
+    stok: +stok.value || 0,
+    min: +min.value || 0,
+    satuan: satuan.value
+  };
+
+  try{
+    await saveItemToSheet(item, "add");
+    await loadInventoryFromSheet();
+    closeModal();
+  }catch(err){
+    alert("Gagal simpan ke Google Sheet");
+    console.error(err);
+  }
+}
+
+/* MASUK & KELUAR */
+function openMasuk(){
+selected = null;
+modalContent.innerHTML=`
+<h3>Barang Masuk</h3>
+<input id="nama" onkeyup="autoList(this,selMasuk)" placeholder="Nama">
+<div id="list" class="list"></div>
+<input id="kode" readonly>
+<input id="jumlah" type="number" placeholder="Jumlah Barang Masuk">
+<button class="primary" onclick="
+if(!selected){
+  alert('Pilih barang dari list');
+  return;
+}
+selected.stok += +jumlah.value;
+history.push({
+  tgl: today(),
+  tipe: 'MASUK',
+  nama: selected.nama,
+  qty: jumlah.value
+});
+closeModal();
+render();
+">Simpan</button>
+<button onclick="closeModal()">Batal</button>`;openModal();
+}
+function selMasuk(i){selected=i;nama.value=i.nama;kode.value=i.kode;list.innerHTML=""}
+
+function openKeluar(){
+selected = null;
+modalContent.innerHTML=`
+<h3>Barang Keluar</h3>
+<input id="nama" onkeyup="autoList(this,selMasuk)" placeholder="Nama">
+<div id="list" class="list"></div>
+<input id="kode" readonly>
+<input id="jumlah" type="number" placeholder="Jumlah Barang Keluar">
+<textarea id="ket" placeholder="Digunakan untuk..."></textarea>
+<button class="warn" onclick="
+if(!selected){
+  alert('Pilih barang dari list');
+  return;
+}
+if(+jumlah.value > selected.stok){
+  alert('Jumlah melebihi stok yang tersedia');
+  return;
+}
+selected.stok -= +jumlah.value;
+history.push({
+  tgl: today(),
+  tipe: 'KELUAR',
+  nama: selected.nama,
+  qty: jumlah.value,
+  ket: ket.value
+});
+closeModal();
+render();
+">Simpan</button>
+
+<button onclick="closeModal()">Batal</button>`;openModal();
+}
+
+/* ADJUST */
+function openAdjust(k){
+  adjustIndex = items.findIndex(x => x.kode === k);
+  const i = items[adjustIndex];
+
+  modalContent.innerHTML = `
+  <h3>Adjustment Item</h3>
+
+  <label>Kode</label>
+  <input id="kode" value="${i.kode}" readonly>
+
+  <label>Nama</label>
+  <input id="nama" value="${i.nama}">
+
+  <label>Kategori</label>
+  <select id="kategori">
+    <option ${i.kategori==="RMPM"?"selected":""}>RMPM</option>
+    <option ${i.kategori==="Sparepart"?"selected":""}>Sparepart</option>
+    <option ${i.kategori==="Chemical"?"selected":""}>Chemical</option>
+  </select>
+
+  <label>Supplier</label>
+  <input id="supplier" value="${i.supplier}">
+
+  <label>Stok</label>
+  <input id="stok" type="number" value="${i.stok}">
+
+  <label>Min Stock</label>
+  <input id="min" type="number" value="${i.min}">
+
+  <label>Satuan</label>
+  <input id="satuan" value="${i.satuan}">
+
+  <button class="primary" onclick="saveAdjust()">Simpan</button>
+  <button onclick="closeModal()">Batal</button>
+  `;
+  openModal();
+}
+
+function saveAdjust(){
+  if(adjustIndex === null) return;
+
+  items[adjustIndex].nama     = nama.value;
+  items[adjustIndex].kategori = kategori.value;
+  items[adjustIndex].supplier = supplier.value;
+  items[adjustIndex].stok     = +stok.value;
+  items[adjustIndex].min      = +min.value;
+  items[adjustIndex].satuan   = satuan.value;
+
+  adjustIndex = null;
+  closeModal();
+  render();
+}
+
+function setActiveNav(id){
+  document.querySelectorAll('.nav-btn').forEach(b=>{
+    b.classList.remove('active');
+  });
+  document.getElementById(id).classList.add('active');
+}
+
+/* HISTORY */
+function openHistory(){
+modalContent.innerHTML = `
+<h3>History</h3>
+${history.map(h => `
+  <p>
+    ${h.tgl} - ${h.tipe} - ${h.nama} (${h.qty || 0})
+    ${h.tipe === 'KELUAR' && h.ket ? `<br><small>Ket: ${h.ket}</small>` : ``}
+  </p>
+`).join("")}
+<button onclick="closeModal()">Tutup</button>
+`;
+openModal();
+}
+
+function showAll(){
+  render(items);
+  setActiveFilter("btnAll");
+}
+
+
+/* ORDER */
+function openPO(){
+selected = null;
+modalContent.innerHTML=`
+<h3>Buat Purchase Order</h3>
+<input id="no" placeholder="No PO">
+<input id="nama" onkeyup="autoList(this,selPO)" placeholder="Nama Barang">
+<div id="list" class="list"></div>
+<input id="kode" readonly>
+<input id="qty" type="number" placeholder="Jumlah">
+<input id="satuan" readonly>
+<input id="eta" type="date">
+<button class="primary" onclick="
+if(!selected){
+  alert('Pilih barang dari list');
+  return;
+}
+const order = {
+  no: no.value,
+  nama: selected.nama,
+  kode: selected.kode,
+  qty: qty.value,
+  satuan: selected.satuan,
+  eta: eta.value,
+  done: false
+};
+
+saveOrderToSheet(order);
+closeModal();
+">Simpan</button>
+
+<button onclick="closeModal()">Batal</button>`;openModal();
+}
+function selPO(i, input, listEl){
+  selected = i;
+  input.value = i.nama;
+  kode.value = i.kode;
+  satuan.value = i.satuan;
+  listEl.innerHTML = "";
+}
+
+function fmt(num){
+  return Number(num || 0).toLocaleString("id-ID");
+}
+
+function renderOrder(){
+  orderBody.innerHTML = "";
+  orders.forEach((o,i)=>{
+    orderBody.innerHTML += `
+      <tr>
+        <td>${o.no}</td>
+        <td>${o.nama}</td>
+        <td>${o.kode}</td>
+        <td>${fmt(o.qty)}</td>
+        <td>${o.satuan}</td>
+        <td>${o.eta}</td>
+        <td>
+          <input type="checkbox" ${o.done ? "checked" : ""} onchange="toggleDone(${i}, this.checked)">
+        </td>
+      </tr>
+    `;
+  });
+}
+
+
+function isKodeExist(kode){
+  return items.some(
+    item => item.kode.toLowerCase() === kode.toLowerCase()
+  );
+}
+
+window.onload = () => {
+  loadInventoryFromSheet(); // load data inventory dari Google Sheet
+  loadOrders();             // load data orders dari localStorage
+};
+
+async function saveOrderToSheet(order) {
+  try {
+    const res = await fetch(
+      "https://script.google.com/macros/s/AKfycbww52ZzQDCeXNp-KUOA3qfcr3FgHgvGnSFzRxlF1yK-DPpjWJLx1znWNrNXHS9rHEqjbg/exec",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(order)
+      }
+    );
+
+    const result = await res.json();
+
+    if(result.status !== "success"){
+      throw new Error("Gagal simpan ke Sheet");
+    }
+
+    // BARU push ke local kalau Sheet sukses
+    orders.push(order);
+    saveOrders();
+    renderOrder();
+
+  } catch (err) {
+    console.error(err);
+    alert("Order GAGAL disimpan ke Google Sheet");
+  }
+}
+
+async function addItem(){
+  const k = kode.value.trim();
+
+  if(!k){
+    alert("Kode wajib diisi");
+    return;
+  }
+
+  if(isKodeExist(k)){
+    alert("Kode barang sudah digunakan");
+    return;
+  }
+
+  const item = {
+    kode: k,
+    nama: nama.value,
+    kategori: kategori.value,
+    supplier: supplier.value,
+    stok: +stok.value || 0,
+    min: +min.value || 0,
+    satuan: satuan.value
+  };
+
+  try{
+    await fetch(
+      "https://script.google.com/macros/s/AKfycbxYPcZ5jIIfpmTLmQLogBWOSSxSYtZY1tAAgweyA8HGzmKhyi553FcOLB3QhzymyuCk5A/exec",
+      {
+        method: "POST",
+        headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({
+          action: "add",
+          ...item
+        })
+      }
+    );
+
+    await loadInventoryFromSheet(); // refresh dari Sheet
+    closeModal();
+
+  }catch(err){
+    alert("Gagal simpan ke Google Sheet");
+    console.error(err);
+  }
+}
+
+
+function openImport(){
+  modalContent.innerHTML = `
+    <h3>Import Item dari Excel</h3>
+    <input type="file" id="file" accept=".xlsx,.xls">
+    <small>Format kolom: kode, nama, kategori, supplier, stok, min, satuan</small><br><br>
+    <button class="primary" onclick="importExcel()">Import</button>
+    <button onclick="closeModal()">Batal</button>
+  `;
+  openModal();
+}
+
+function toggleDone(index, checked){
+  orders[index].done = checked;
+  saveOrders();
+}
+
+function setActiveFilter(id){
+  document.getElementById("btnLow").classList.remove("active");
+  document.getElementById("btnAll").classList.remove("active");
+  document.getElementById(id).classList.add("active");
+}
+
+  async function loadInventoryFromSheet(){
+    const res = await fetch("https://script.google.com/macros/s/AKfycbww52ZzQDCeXNp-KUOA3qfcr3FgHgvGnSFzRxlF1yK-DPpjWJLx1znWNrNXHS9rHEqjbg/exec"); // ganti dengan Web App URL
+    const data = await res.json();
+    items = data;
+    render();
+  }
+
+  async function saveItemToSheet(item, action){
+  await fetch("https://script.google.com/macros/s/AKfycbww52ZzQDCeXNp-KUOA3qfcr3FgHgvGnSFzRxlF1yK-DPpjWJLx1znWNrNXHS9rHEqjbg/exec", {
+    method: "POST",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({
+      action,
+      ...item
+    })
+  });
+}
+
+
+function importExcel(){
+  const fileInput = document.getElementById('file');
+  if(!fileInput.files.length){
+    alert("Pilih file Excel terlebih dahulu");
+    return;
+  }
+
+  const reader = new FileReader();
+  reader.onload = function(e){
+    const data = new Uint8Array(e.target.result);
+    const workbook = XLSX.read(data, {type:'array'});
+    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(sheet);
+
+    rows.forEach(r => {
+      // Cegah duplikasi kode
+      if(items.some(i => i.kode === r.kode)) return;
+
+      items.push({
+        kode: r.kode,
+        nama: r.nama,
+        kategori: r.kategori,
+        supplier: r.supplier,
+        stok: Number(r.stok) || 0,
+        min: Number(r.min) || 0,
+        satuan: r.satuan
+      });
+    });
+
+    closeModal();
+    render();
+    alert("Import selesai");
+  };
+
+  reader.readAsArrayBuffer(fileInput.files[0]);
+}
+
+
+setActiveNav('btnInv');
+setActiveNav('btnInv');
+setActiveFilter("btnAll");
+
+
+
+</script>
+</body>
+</html>
